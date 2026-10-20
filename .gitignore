@@ -1,0 +1,12 @@
+# Go 构建产物和测试输出
+/bin/
+/coverage.out
+*.test
+*.prof
+
+# 本机配置与日志
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
