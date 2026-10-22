@@ -1,7 +1,6 @@
 package p2p
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -18,12 +17,16 @@ type TCPPeer struct {
 	// 这个标记由程序设置，不限制收发方向；TCP 连接两端都可以读写。
 	outbound bool
 }
+type TCPTransportOpts struct {
+	ListenAddr    string
+	HandshakeFunc HandshakeFunc
+	Decoder       Decoder
+}
 
 // TcpTransport 是基于 TCP 的传输层实现。
 type TcpTransport struct {
-	ListenAddress string       // 监听配置，例如 ":3000"。
-	Listener      net.Listener // net.Listen 成功后得到的监听器，负责接收连接。
-
+	TCPTransportOpts
+	Listener net.Listener // net.Listen 成功后得到的监听器，负责接收连接。
 	// 预留用于保护 peers 的读写锁；当前还没有保存和访问节点的逻辑。
 	// 声明锁不会自动保护 map，实际访问时需要主动调用 Lock/RLock 等方法。
 	mu sync.RWMutex
@@ -41,9 +44,9 @@ func NewTCCPer(conn net.Conn, outbound bool) *TCPPeer {
 }
 
 // NewTCPTransport 创建对象并保存监听配置，不在构造时建立网络监听。
-func NewTCPTransport(listenAddr string) *TcpTransport {
+func NewTCPTransport(opts TCPTransportOpts) *TcpTransport {
 	return &TcpTransport{
-		ListenAddress: listenAddr,
+		TCPTransportOpts: opts,
 	}
 }
 
@@ -52,7 +55,7 @@ func NewTCPTransport(listenAddr string) *TcpTransport {
 func (t *TcpTransport) ListenAndAccept() error {
 	var err error
 	// Listener 是已有结构体字段，err 也已声明，因此这里使用 = 赋值。
-	t.Listener, err = net.Listen("tcp", t.ListenAddress)
+	t.Listener, err = net.Listen("tcp", t.TCPTransportOpts.ListenAddr)
 	if err != nil {
 		return err
 	}
@@ -66,17 +69,18 @@ func (t *TcpTransport) acceptLoop() {
 		conn, err := t.Listener.Accept()
 		if err != nil {
 			// 主动关闭监听器也会让 Accept 返回错误，此时退出循环即可。
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
+
 			fmt.Printf("Tcp accept error :%s\n", err)
 			// 接收失败时不处理 conn，继续尝试接收下一条连接。
-			continue
-		}
 
+		}
+		fmt.Printf("Tcp accept new connection from %s\n", conn)
 		// 每条连接交给独立 goroutine 处理，当前循环继续接收其他连接。
 		go t.handleConn(conn)
 	}
+}
+
+type Temp struct {
 }
 
 // handleConn 当前只封装连接并打印日志，尚未实现读取、响应和节点登记。
@@ -84,8 +88,20 @@ func (t *TcpTransport) handleConn(conn net.Conn) {
 	// TODO: 此函数目前仅从 Accept 路径调用，属于入站连接，方向应为 false。
 	// 本次只添加说明，保留当前 true 的执行逻辑，便于后续单独修复和验证。
 	peer := NewTCCPer(conn, true)
-	fmt.Printf("new incoming connetion %+v\n", peer)
 
-	// TODO: 后续实现连接处理时明确由谁关闭 conn；当前处理结束后没有关闭它，
-	// 也没有把 peer 存入节点表，连接的完整生命周期尚未实现。
+	if err := t.TCPTransportOpts.HandshakeFunc(peer); err != nil {
+		conn.Close()
+		fmt.Printf("TCP handshake error:%s\n", err)
+		return
+
+	}
+	msg := &Message{}
+	for {
+		if err := t.TCPTransportOpts.Decoder.Decoder(conn, msg); err != nil {
+			fmt.Printf("TCP decode error:%s\n", err)
+			return
+		}
+		msg.From = conn.RemoteAddr()
+		fmt.Printf("TCP receive message:%v\n", msg)
+	}
 }
