@@ -6,7 +6,7 @@ import (
 
 // 支持传输任意类型的数据
 // 两个节点的传输都可以
-type Message struct {
+type RPC struct {
 	From    net.Addr
 	PayLoad []byte
 }

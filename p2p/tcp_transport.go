@@ -21,6 +21,11 @@ type TCPTransportOpts struct {
 	ListenAddr    string
 	HandshakeFunc HandshakeFunc
 	Decoder       Decoder
+	OnPeer        func(Peer) error
+}
+
+func (p *TCPPeer) Close() error {
+	return p.conn.Close()
 }
 
 // TcpTransport 是基于 TCP 的传输层实现。
@@ -29,7 +34,8 @@ type TcpTransport struct {
 	Listener net.Listener // net.Listen 成功后得到的监听器，负责接收连接。
 	// 预留用于保护 peers 的读写锁；当前还没有保存和访问节点的逻辑。
 	// 声明锁不会自动保护 map，实际访问时需要主动调用 Lock/RLock 等方法。
-	mu sync.RWMutex
+	rpcch chan *RPC
+	mu    sync.RWMutex
 	// 预留的远程节点表，目前是 nil map；写入前需要用 make 初始化。
 	peers map[net.Addr]Peer
 }
@@ -47,6 +53,7 @@ func NewTCCPer(conn net.Conn, outbound bool) *TCPPeer {
 func NewTCPTransport(opts TCPTransportOpts) *TcpTransport {
 	return &TcpTransport{
 		TCPTransportOpts: opts,
+		rpcch:            make(chan *RPC), // 预留缓冲区，避免阻塞发送方。
 	}
 }
 
@@ -61,6 +68,9 @@ func (t *TcpTransport) ListenAndAccept() error {
 	}
 	go t.acceptLoop()
 	return nil
+}
+func (t *TcpTransport) Consume() <-chan *RPC {
+	return t.rpcch
 }
 
 // acceptLoop 持续等待客户端连接；没有新连接时 Accept 会阻塞等待。
@@ -80,28 +90,37 @@ func (t *TcpTransport) acceptLoop() {
 	}
 }
 
-type Temp struct {
-}
-
 // handleConn 当前只封装连接并打印日志，尚未实现读取、响应和节点登记。
 func (t *TcpTransport) handleConn(conn net.Conn) {
 	// TODO: 此函数目前仅从 Accept 路径调用，属于入站连接，方向应为 false。
 	// 本次只添加说明，保留当前 true 的执行逻辑，便于后续单独修复和验证。
-	peer := NewTCCPer(conn, true)
 
-	if err := t.TCPTransportOpts.HandshakeFunc(peer); err != nil {
+	var err error
+	defer func() {
+		fmt.Printf("dropping peer conenction:%s", err)
 		conn.Close()
-		fmt.Printf("TCP handshake error:%s\n", err)
+	}()
+	peer := NewTCCPer(conn, true)
+	if err = t.TCPTransportOpts.HandshakeFunc(peer); err != nil {
 		return
-
 	}
-	msg := &Message{}
-	for {
-		if err := t.TCPTransportOpts.Decoder.Decoder(conn, msg); err != nil {
-			fmt.Printf("TCP decode error:%s\n", err)
+	if t.OnPeer != nil {
+		if err = t.OnPeer(peer); err != nil {
 			return
 		}
-		msg.From = conn.RemoteAddr()
-		fmt.Printf("TCP receive message:%v\n", msg)
 	}
+	rpc := &RPC{}
+	for {
+		err := t.Decoder.Decoder(conn, rpc)
+		if err == net.ErrClosed {
+			return
+		}
+		if err != nil {
+			fmt.Printf("Tcp decode error:%s\n", err)
+			return
+		}
+		rpc.From = conn.RemoteAddr()
+		t.rpcch <- rpc
+	}
+
 }

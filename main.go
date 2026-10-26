@@ -1,18 +1,31 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/kexit5756/go_desk/p2p"
 )
 
+func Onpeer(peer p2p.Peer) error {
+	peer.Close()
+	return nil
+}
 func main() {
 	tcpOpts := p2p.TCPTransportOpts{
 		ListenAddr:    ":3000",
 		HandshakeFunc: p2p.NOPHandshakeFunc,
 		Decoder:       p2p.DefaultDecoder{}, // 使用默认解码器。
+		OnPeer:        Onpeer,               // 连接建立后不做额外处理。
 	}
 	tr := p2p.NewTCPTransport(tcpOpts)
+
+	go func() {
+		for {
+			msg := <-tr.Consume()
+			fmt.Printf("Received message: %+v\n", msg)
+		}
+	}()
 	if err := tr.ListenAndAccept(); err != nil {
 		log.Fatalf("Failed to start TCP transport: %v", err)
 	}
