@@ -10,3 +10,8 @@
 !.env.example
 *.log
 .DS_Store
+
+# 当前存储练习产生的本地数据（不是源码或固定测试夹具）
+/myspecialpicture/
+# key 散列生成的首级目录为 5 位十六进制字符
+/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
