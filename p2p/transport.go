@@ -1,16 +1,17 @@
 package p2p
 
-// Peer 表示远程节点的抽象，目前还没有规定节点必须实现哪些方法。
-// 这是空接口：任何类型都能满足它，因此暂时不能通过 Peer 调用收发方法。
+// Peer 定义远程节点当前需要提供的能力。
+// 它已不是空接口：实现类型必须有 Close() error 方法；*TCPPeer 满足该要求。
 type Peer interface {
+	// Close 关闭节点底层连接，用于拒绝节点或回收资源。
 	Close() error
 }
 
-// Transport 描述传输层需要具备的能力，业务层可以面向这个接口编写代码。
-// Go 按方法集合隐式判断实现关系，类型不需要声明 implements。
-// 当前 *TcpTransport 已具备这里要求的 ListenAndAccept 方法。
+// Transport 抽象传输层的启动与消息消费能力。
+// Go 根据方法集合隐式判断实现关系，*TcpTransport 实现了这里的两个方法。
 type Transport interface {
-	// ListenAndAccept 启动监听与连接接收；启动失败时返回错误。
+	// ListenAndAccept 启动监听及后台接收循环；返回 nil 只代表监听启动成功。
 	ListenAndAccept() error
+	// Consume 返回只读 channel，业务层可接收消息，不能通过该返回值发送消息。
 	Consume() <-chan *RPC
 }
