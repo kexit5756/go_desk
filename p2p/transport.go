@@ -7,11 +7,12 @@ type Peer interface {
 	Close() error
 }
 
-// Transport 抽象传输层的启动与消息消费能力。
-// Go 根据方法集合隐式判断实现关系，*TcpTransport 实现了这里的两个方法。
+// Transport 抽象传输层的启动、消息消费和关闭能力。
+// Go 根据方法集合隐式判断实现关系；*TcpTransport 实现了这里的三个方法。
 type Transport interface {
 	// ListenAndAccept 启动监听及后台接收循环；返回 nil 只代表监听启动成功。
 	ListenAndAccept() error
 	// Consume 返回只读 channel，业务层可接收消息，不能通过该返回值发送消息。
 	Consume() <-chan *RPC
+	Close() error
 }

@@ -148,3 +148,7 @@ go test -v ./...
 
 - [anthdm/distributedfilesystemgo](https://github.com/anthdm/distributedfilesystemgo)
 - [配套 B 站视频](https://www.bilibili.com/video/BV18b421H78a/)
+
+## SHA-1 摘要
+
+SHA-1 会为输入数据生成 20 字节（160 位）的摘要，常用于识别数据或检查内容是否发生变化。它不是加密算法，也不适合用于安全敏感场景。本项目当前用它把逻辑 key 转换为分层文件路径；散列的是 key，不是文件内容。

@@ -1,7 +1,9 @@
 package p2p
 
 import (
-	"fmt"
+	"errors"
+	"io"
+	"log"
 	"net"
 	"sync"
 )
@@ -72,7 +74,18 @@ func (t *TcpTransport) ListenAndAccept() error {
 		return err
 	}
 	go t.acceptLoop()
+
+	log.Printf("TCP transport listening on %s", t.ListenAddr)
 	return nil
+
+}
+
+// Close 关闭监听器，停止接收新连接；已接入的连接仍然可以读写。
+func (t *TcpTransport) Close() error {
+	if t.Listener == nil {
+		return nil
+	}
+	return t.Listener.Close()
 }
 
 // Consume 把内部 channel 以只读形式交给业务层，不会创建或复制 channel。
@@ -84,13 +97,15 @@ func (t *TcpTransport) Consume() <-chan *RPC {
 func (t *TcpTransport) acceptLoop() {
 	for {
 		conn, err := t.Listener.Accept()
-		if err != nil {
-			// TODO: 此处当前只有日志，错误后仍会处理 conn，可能传入 nil。
-			// 应在监听器关闭时退出，对其他错误分类处理，成功后才启动 handleConn。
-			fmt.Printf("Tcp accept error :%s\n", err)
+		if errors.Is(err, net.ErrClosed) {
+			log.Println("TCP Transport listener closed, exiting accept loop")
+			return
 		}
-		// TODO: 用 conn.RemoteAddr().String() 打印地址；%s 不适合直接打印连接对象。
-		fmt.Printf("Tcp accept new connection from %s\n", conn)
+		if err != nil {
+			log.Printf("TCP accept error: %v", err)
+			continue
+		}
+		log.Printf("TCP accepted connection from %s", conn.RemoteAddr())
 		go t.handleConn(conn)
 	}
 }
@@ -99,14 +114,16 @@ func (t *TcpTransport) acceptLoop() {
 // 函数退出时关闭连接；若卡在 channel 发送处，则还不会执行 defer。
 func (t *TcpTransport) handleConn(conn net.Conn) {
 	var err error
-	// defer 在函数返回或栈展开时执行，用于关闭底层连接。
-	// TODO: 下面循环里的 err := 会遮蔽外层 err，因此这里可能打印不到真实读取错误。
 	defer func() {
-		fmt.Printf("dropping peer conenction:%s", err)
-		conn.Close()
+		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
+			log.Printf("dropping peer connection after error: %v", err)
+		} else {
+			log.Printf("closing peer connection from %s", conn.RemoteAddr())
+		}
+		_ = conn.Close()
 	}()
-	// TODO: 当前只从 Accept 接入，outbound 应为 false；这里仍保留现有 true。
-	peer := NewTCCPer(conn, true)
+	// 该连接由 Accept 接入，因此对于本节点来说是入站连接。
+	peer := NewTCCPer(conn, false)
 	if err = t.TCPTransportOpts.HandshakeFunc(peer); err != nil {
 		return
 	}
@@ -116,17 +133,15 @@ func (t *TcpTransport) handleConn(conn net.Conn) {
 			return
 		}
 	}
-	// TODO: 应移到循环内，让每条消息独立分配；复用指针会覆盖消费者持有的数据。
-	// channel 传递的是指针，发送结束不代表消费者已经完成对对象的读取。
-	rpc := &RPC{}
 	for {
-		err := t.Decoder.Decoder(conn, rpc)
-		// TODO: net.Conn 的错误可能被包装；判断关闭原因时应考虑 errors.Is。
-		if err == net.ErrClosed {
+		// 每条消息创建独立的 RPC，避免后续解码覆盖消费者已从 channel 收到的数据。
+		rpc := &RPC{}
+		err = t.Decoder.Decoder(conn, rpc)
+		if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 			return
 		}
 		if err != nil {
-			fmt.Printf("Tcp decode error:%s\n", err)
+			log.Printf("TCP decode error: %v", err)
 			return
 		}
 		rpc.From = conn.RemoteAddr()
